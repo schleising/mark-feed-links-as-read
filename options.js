@@ -24,6 +24,16 @@ let rules = [];
 let historyDomains = [];
 let editingRuleId = "";
 
+const CONTROL_ESCAPE_MAP = {
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  0: "\0",
+};
+
 function createRuleId() {
   return `rule-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -61,11 +71,131 @@ function normalizeRule(rawRule) {
     name: String(rawRule.name || "").trim(),
     domainPattern: normalizeDomainPattern(rawRule.domainPattern),
     selector: String(rawRule.selector || "").trim(),
-    declarations: String(rawRule.declarations || "").trim(),
+    declarations: decodeEscapedControlCodes(String(rawRule.declarations || "").trim()),
     enabled: rawRule.enabled !== false,
     createdAt: typeof rawRule.createdAt === "number" ? rawRule.createdAt : now,
     updatedAt: typeof rawRule.updatedAt === "number" ? rawRule.updatedAt : now,
   };
+}
+
+function isHexDigit(char) {
+  return /^[0-9a-fA-F]$/.test(char);
+}
+
+function isSlashEscapeBoundary(value, index, escapeLength) {
+  const previous = index > 0 ? value[index - 1] : "";
+  const nextIndex = index + escapeLength;
+  const following = nextIndex < value.length ? value[nextIndex] : "";
+
+  const previousIsBoundary = previous === "" || /[\s:;,(\[{=+>~!]/.test(previous);
+  const followingIsBoundary = following === "" || /[\s;:,)\]}=+>~!]/.test(following);
+
+  return previousIsBoundary && followingIsBoundary;
+}
+
+function decodeEscapedControlCodes(rawValue) {
+  const value = String(rawValue || "");
+  if (value === "") {
+    return "";
+  }
+
+  let output = "";
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const hasNext = index + 1 < value.length;
+
+    if (!hasNext || (char !== "\\" && char !== "/")) {
+      output += char;
+      continue;
+    }
+
+    const next = value[index + 1];
+    const isBackslashEscape = char === "\\";
+    const canDecodeSlashEscape = isBackslashEscape || isSlashEscapeBoundary(value, index, 2);
+
+    if (canDecodeSlashEscape && Object.prototype.hasOwnProperty.call(CONTROL_ESCAPE_MAP, next)) {
+      output += CONTROL_ESCAPE_MAP[next];
+      index += 1;
+      continue;
+    }
+
+    if (next === "x" && index + 3 < value.length) {
+      if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, 4)) {
+        output += char;
+        continue;
+      }
+
+      const hexValue = value.slice(index + 2, index + 4);
+      if (isHexDigit(hexValue[0]) && isHexDigit(hexValue[1])) {
+        const codePoint = Number.parseInt(hexValue, 16);
+        if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+          output += String.fromCodePoint(codePoint);
+          index += 3;
+          continue;
+        }
+      }
+    }
+
+    if (next === "u") {
+      if (index + 2 < value.length && value[index + 2] === "{" ) {
+        const closeIndex = value.indexOf("}", index + 3);
+        if (closeIndex !== -1) {
+          if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, closeIndex - index + 1)) {
+            output += char;
+            continue;
+          }
+
+          const hexCodePoint = value.slice(index + 3, closeIndex);
+          if (/^[0-9a-fA-F]{1,6}$/.test(hexCodePoint)) {
+            const codePoint = Number.parseInt(hexCodePoint, 16);
+            if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+              output += String.fromCodePoint(codePoint);
+              index = closeIndex;
+              continue;
+            }
+          }
+        }
+      } else if (index + 5 < value.length) {
+        if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, 6)) {
+          output += char;
+          continue;
+        }
+
+        const hexValue = value.slice(index + 2, index + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hexValue)) {
+          const codePoint = Number.parseInt(hexValue, 16);
+          if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+            output += String.fromCodePoint(codePoint);
+            index += 5;
+            continue;
+          }
+        }
+      }
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function normalizeDeclarationsInputField() {
+  const currentValue = String(declarationsInput.value || "");
+  const decodedValue = decodeEscapedControlCodes(currentValue);
+
+  if (decodedValue === currentValue) {
+    return;
+  }
+
+  const selectionStart = declarationsInput.selectionStart ?? currentValue.length;
+  const selectionEnd = declarationsInput.selectionEnd ?? selectionStart;
+
+  const decodedBeforeStart = decodeEscapedControlCodes(currentValue.slice(0, selectionStart));
+  const decodedBeforeEnd = decodeEscapedControlCodes(currentValue.slice(0, selectionEnd));
+
+  declarationsInput.value = decodedValue;
+  declarationsInput.setSelectionRange(decodedBeforeStart.length, decodedBeforeEnd.length);
 }
 
 function normalizeHistoryDomains(candidateDomains) {
@@ -317,7 +447,9 @@ function resetForm() {
 function readFormRule() {
   const domainPattern = normalizeDomainPattern(domainInput.value);
   const selector = String(selectorInput.value || "").trim();
-  const declarations = String(declarationsInput.value || "").trim();
+  const declarations = decodeEscapedControlCodes(String(declarationsInput.value || "").trim());
+
+  declarationsInput.value = declarations;
 
   if (domainPattern === "") {
     setStatus("Domain pattern is required.", "error");
@@ -472,6 +604,8 @@ async function initialize() {
 
   historyDomainForm.addEventListener("submit", handleHistoryDomainSubmit);
   ruleForm.addEventListener("submit", handleSubmit);
+  declarationsInput.addEventListener("input", normalizeDeclarationsInputField);
+  declarationsInput.addEventListener("blur", normalizeDeclarationsInputField);
   cancelEditButton.addEventListener("click", resetForm);
   chrome.storage.onChanged.addListener(handleStorageChanged);
 }

@@ -8,6 +8,15 @@
   const DECORATED_CLASS = "mflar-seen-from-feeds";
   const DEBUG = true;
   const DEBUG_PREFIX = "[MFLAR]";
+  const CONTROL_ESCAPE_MAP = {
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    b: "\b",
+    f: "\f",
+    v: "\v",
+    0: "\0",
+  };
 
   function debugLog(message, details) {
     if (!DEBUG) {
@@ -28,6 +37,108 @@
     }
 
     console.error(`${DEBUG_PREFIX} ${message}`, error);
+  }
+
+  function isHexDigit(char) {
+    return /^[0-9a-fA-F]$/.test(char);
+  }
+
+  function isSlashEscapeBoundary(value, index, escapeLength) {
+    const previous = index > 0 ? value[index - 1] : "";
+    const nextIndex = index + escapeLength;
+    const following = nextIndex < value.length ? value[nextIndex] : "";
+
+    const previousIsBoundary = previous === "" || /[\s:;,(\[{=+>~!]/.test(previous);
+    const followingIsBoundary = following === "" || /[\s;:,)\]}=+>~!]/.test(following);
+
+    return previousIsBoundary && followingIsBoundary;
+  }
+
+  function decodeEscapedControlCodes(rawValue) {
+    const value = String(rawValue || "");
+    if (value === "") {
+      return "";
+    }
+
+    let output = "";
+
+    for (let index = 0; index < value.length; index += 1) {
+      const char = value[index];
+      const hasNext = index + 1 < value.length;
+
+      if (!hasNext || (char !== "\\" && char !== "/")) {
+        output += char;
+        continue;
+      }
+
+      const next = value[index + 1];
+      const isBackslashEscape = char === "\\";
+      const canDecodeSlashEscape = isBackslashEscape || isSlashEscapeBoundary(value, index, 2);
+
+      if (canDecodeSlashEscape && Object.prototype.hasOwnProperty.call(CONTROL_ESCAPE_MAP, next)) {
+        output += CONTROL_ESCAPE_MAP[next];
+        index += 1;
+        continue;
+      }
+
+      if (next === "x" && index + 3 < value.length) {
+        if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, 4)) {
+          output += char;
+          continue;
+        }
+
+        const hexValue = value.slice(index + 2, index + 4);
+        if (isHexDigit(hexValue[0]) && isHexDigit(hexValue[1])) {
+          const codePoint = Number.parseInt(hexValue, 16);
+          if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+            output += String.fromCodePoint(codePoint);
+            index += 3;
+            continue;
+          }
+        }
+      }
+
+      if (next === "u") {
+        if (index + 2 < value.length && value[index + 2] === "{") {
+          const closeIndex = value.indexOf("}", index + 3);
+          if (closeIndex !== -1) {
+            if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, closeIndex - index + 1)) {
+              output += char;
+              continue;
+            }
+
+            const hexCodePoint = value.slice(index + 3, closeIndex);
+            if (/^[0-9a-fA-F]{1,6}$/.test(hexCodePoint)) {
+              const codePoint = Number.parseInt(hexCodePoint, 16);
+              if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+                output += String.fromCodePoint(codePoint);
+                index = closeIndex;
+                continue;
+              }
+            }
+          }
+        } else if (index + 5 < value.length) {
+          if (!isBackslashEscape && !isSlashEscapeBoundary(value, index, 6)) {
+            output += char;
+            continue;
+          }
+
+          const hexValue = value.slice(index + 2, index + 6);
+          if (/^[0-9a-fA-F]{4}$/.test(hexValue)) {
+            const codePoint = Number.parseInt(hexValue, 16);
+            if (codePoint <= 0x1f || codePoint === 0x7f || isBackslashEscape) {
+              output += String.fromCodePoint(codePoint);
+              index += 5;
+              continue;
+            }
+          }
+        }
+      }
+
+      output += char;
+    }
+
+    return output;
   }
 
   function normalizeDomainPattern(rawPattern) {
@@ -237,7 +348,7 @@
 
   function buildCustomCssRule(rule) {
     const selector = String(rule.selector || "").trim();
-    const declarations = String(rule.declarations || "").trim();
+    const declarations = decodeEscapedControlCodes(String(rule.declarations || "").trim());
 
     if (selector === "" || declarations === "") {
       return "";
