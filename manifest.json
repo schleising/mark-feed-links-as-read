@@ -4,8 +4,16 @@
   "version": "0.0.0",
   "description": "Marks New Scientist links as seen when opened from Feeds and decorates matching links on newscientist.com.",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs",
+    "webNavigation"
   ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [

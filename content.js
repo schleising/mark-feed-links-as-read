@@ -32,6 +32,31 @@
     console.error(`${DEBUG_PREFIX} ${message}`, error);
   }
 
+  function notifyBackgroundFeedsTabActive(reason = "unknown") {
+    if (!isFeedsPage()) {
+      return;
+    }
+
+    if (!chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: "mflar-feeds-tab-active",
+      href: window.location.href,
+      reason,
+    })
+      .then(response => {
+        debugLog("Reported active feeds tab to background.", {
+          reason,
+          response,
+        });
+      })
+      .catch(error => {
+        debugError("Failed to report active feeds tab to background.", error);
+      });
+  }
+
   function normalizeNewScientistArticleUrl(rawUrl) {
     try {
       const parsed = new URL(String(rawUrl || ""), window.location.href);
@@ -176,6 +201,18 @@
       return;
     }
 
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    if (event.type === "click" && event.button !== 0) {
+      return;
+    }
+
+    if (event.type === "auxclick" && event.button !== 1) {
+      return;
+    }
+
     const target = getEventTargetElement(event);
     if (!target) {
       return;
@@ -205,7 +242,7 @@
       return;
     }
 
-    if (event.key !== "Enter" && event.key !== " ") {
+    if (event.defaultPrevented || event.key !== "Enter") {
       return;
     }
 
@@ -301,13 +338,17 @@
       href: window.location.href,
     });
 
-    document.addEventListener("pointerdown", trackFeedsLinkActivation, true);
-    document.addEventListener("mousedown", trackFeedsLinkActivation, true);
+    notifyBackgroundFeedsTabActive("setup");
+
     document.addEventListener("click", trackFeedsLinkActivation, true);
     document.addEventListener("auxclick", trackFeedsLinkActivation, true);
     document.addEventListener("keydown", trackFeedsKeyActivation, true);
+    window.addEventListener("focus", () => {
+      notifyBackgroundFeedsTabActive("focus");
+    });
     window.addEventListener("pagehide", () => {
       debugLog("pagehide observed, forcing pending flush.");
+      notifyBackgroundFeedsTabActive("pagehide");
       void flushPendingFeedLinks();
     });
   }
