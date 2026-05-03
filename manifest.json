@@ -2,14 +2,15 @@
   "manifest_version": 3,
   "name": "Mark Feed Links as Read",
   "version": "0.0.0",
-  "description": "Marks New Scientist links as seen when opened from Feeds and decorates matching links on newscientist.com.",
+  "description": "Marks loaded New Scientist article tabs as seen and decorates matching links on newscientist.com.",
   "permissions": [
     "storage",
     "tabs",
     "webNavigation"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "*://newscientist.com/*",
+    "*://www.newscientist.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -17,7 +18,8 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "*://newscientist.com/*",
+        "*://www.newscientist.com/*"
       ],
       "js": [
         "content.js"

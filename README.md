@@ -5,8 +5,8 @@ New Scientist links when browser visited-link partitioning is enabled.
 
 ## What it does
 
-- Tracks New Scientist article links opened from your Feeds page.
-- Marks links opened via Right Click -> Open link in new tab using a background navigation listener.
+- Watches browser tab/navigation loads.
+- Marks New Scientist article pages as seen regardless of where they were opened from.
 - Stores a local seen-link set in `chrome.storage.local`.
 - On `newscientist.com`, decorates matching links with a CSS class so they can
 	appear "read" independently of `:visited`.
@@ -42,13 +42,13 @@ a.mflar-seen-from-feeds * {
 If links are not decorating:
 
 1. Reload the unpacked extension from `chrome://extensions` after code changes.
-2. Refresh both the Feeds tab and any open New Scientist tabs.
-3. Open a New Scientist article by clicking its link from Feeds.
-4. Open `chrome://extensions`, click `Inspect views` for this extension content script, and check for errors.
+2. Refresh any open New Scientist tabs.
+3. Open a New Scientist article page in any tab.
+4. Open `chrome://extensions`, click `Inspect views` for this extension content script/service worker, and check for errors.
 
 This extension only tracks and decorates New Scientist `/article/...` links.
 
 Debug logs use the prefix `[MFLAR]` in the page console.
 Background service worker logs use `[MFLAR][BG]` in the extension service worker console.
 
-Right-click alone does not mark a link as seen; marking happens on actual open actions.
+Right-click alone does not mark a link as seen; marking happens once a New Scientist article tab actually loads.
