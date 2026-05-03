@@ -104,6 +104,31 @@
     head.appendChild(style);
   }
 
+  function ensureScrollbarStyle() {
+    const existing = document.getElementById("mflar-scrollbar-style");
+    if (existing) {
+      return;
+    }
+
+    const style = document.createElement("style");
+    style.id = "mflar-scrollbar-style";
+    style.textContent = [
+      "html,",
+      "body {",
+      "  scrollbar-width: auto !important;",
+      "  scrollbar-color: rgba(128, 128, 128, 0.8) #F1F1F1 !important;",
+      "}"
+    ].join("\n");
+
+    const head = document.head || document.documentElement;
+    head.appendChild(style);
+  }
+
+  function isSubstackPage() {
+    const hostname = String(window.location.hostname || "").toLowerCase();
+    return hostname === "substack.com" || hostname === "www.substack.com" || hostname.endsWith(".substack.com");
+  }
+
   function applyDecorations(root, seenUrlSet, reason = "unknown") {
     const anchors = collectAnchors(root);
     let decoratedCount = 0;
@@ -183,10 +208,16 @@
   }
 
   const newScientistPage = isNewScientistPage();
+  const substackPage = isSubstackPage();
+
+  if (newScientistPage || substackPage) {
+    ensureScrollbarStyle();
+  }
 
   debugLog("Content script initialized.", {
     href: window.location.href,
     newScientistPage,
+    substackPage,
   });
 
   if (newScientistPage) {

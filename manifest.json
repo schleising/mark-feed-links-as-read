@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Mark Feed Links as Read",
   "version": "0.0.0",
-  "description": "Marks loaded New Scientist article tabs as seen and decorates matching links on newscientist.com.",
+  "description": "Marks loaded New Scientist article tabs as seen, decorates matching links, and injects scrollbar styling on newscientist.com and substack.com.",
   "permissions": [
     "storage",
     "tabs",
@@ -10,7 +10,10 @@
   ],
   "host_permissions": [
     "*://newscientist.com/*",
-    "*://www.newscientist.com/*"
+    "*://www.newscientist.com/*",
+    "*://substack.com/*",
+    "*://www.substack.com/*",
+    "*://*.substack.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -19,7 +22,10 @@
     {
       "matches": [
         "*://newscientist.com/*",
-        "*://www.newscientist.com/*"
+        "*://www.newscientist.com/*",
+        "*://substack.com/*",
+        "*://www.substack.com/*",
+        "*://*.substack.com/*"
       ],
       "js": [
         "content.js"

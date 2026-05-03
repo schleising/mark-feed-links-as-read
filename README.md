@@ -8,6 +8,7 @@ New Scientist links when browser visited-link partitioning is enabled.
 - Watches browser tab/navigation loads.
 - Marks New Scientist article pages as seen regardless of where they were opened from.
 - Stores a local seen-link set in `chrome.storage.local`.
+- Injects custom scrollbar styling on `newscientist.com` and `substack.com` pages.
 - On `newscientist.com`, decorates matching links with a CSS class so they can
 	appear "read" independently of `:visited`.
 
@@ -22,6 +23,12 @@ The extension injects this style on New Scientist pages:
 a.mflar-seen-from-feeds,
 a.mflar-seen-from-feeds * {
 	color: dimgrey !important;
+}
+
+html,
+body {
+	scrollbar-width: auto !important;
+	scrollbar-color: rgba(128, 128, 128, 0.8) #F1F1F1 !important;
 }
 ```
 
