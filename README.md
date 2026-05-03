@@ -61,7 +61,7 @@ Rules are saved in `chrome.storage.local` and applied live on matching pages.
 
 ## Notes
 
-- Manifest version is intentionally `0.0.0` for local development use.
+- Current extension version is `1.0.0`.
 - Seen-link history is pruned by age and capped in size.
 - Legacy seen-link storage keys are automatically migrated.
 
@@ -73,8 +73,5 @@ If links are not decorating:
 2. Confirm at least one `History Domains` entry exists in Extension options.
 3. Refresh the relevant page and open a link to a tracked domain in any tab.
 4. Open `chrome://extensions`, click `Inspect views` for this extension content script/service worker, and check for errors.
-
-Debug logs use the prefix `[MFLAR]` in the page console.
-Background service worker logs use `[MFLAR][BG]` in the extension service worker console.
 
 Right-click alone does not mark a link as seen; marking happens once a tracked-domain tab actually loads.

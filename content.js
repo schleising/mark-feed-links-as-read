@@ -6,8 +6,6 @@
   const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
   const CUSTOM_STYLE_RULES_STORAGE_KEY = "customStyleRulesV1";
   const DECORATED_CLASS = "mflar-seen-from-feeds";
-  const DEBUG = true;
-  const DEBUG_PREFIX = "[MFLAR]";
   const CONTROL_ESCAPE_MAP = {
     n: "\n",
     r: "\r",
@@ -17,27 +15,6 @@
     v: "\v",
     0: "\0",
   };
-
-  function debugLog(message, details) {
-    if (!DEBUG) {
-      return;
-    }
-
-    if (typeof details === "undefined") {
-      console.log(`${DEBUG_PREFIX} ${message}`);
-      return;
-    }
-
-    console.log(`${DEBUG_PREFIX} ${message}`, details);
-  }
-
-  function debugError(message, error) {
-    if (!DEBUG) {
-      return;
-    }
-
-    console.error(`${DEBUG_PREFIX} ${message}`, error);
-  }
 
   function isHexDigit(char) {
     return /^[0-9a-fA-F]$/.test(char);
@@ -244,36 +221,20 @@
 
     const current = data[SEEN_LINK_STORAGE_KEY];
     if (current && typeof current === "object") {
-      debugLog("Loaded seen-link map from generic storage key.", {
-        entries: Object.keys(current).length,
-      });
-
       return current;
     }
 
     const legacy = data[LEGACY_SEEN_LINK_STORAGE_KEY];
     if (legacy && typeof legacy === "object") {
-      debugLog("Loaded seen-link map from legacy storage key.", {
-        entries: Object.keys(legacy).length,
-      });
-
       return legacy;
     }
 
-    debugLog("No seen-link map found in storage yet.");
     return {};
   }
 
   async function loadHistoryDomains() {
     const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
-    const normalized = normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
-
-    debugLog("Loaded history domains from storage.", {
-      totalDomains: normalized.length,
-      domains: normalized,
-    });
-
-    return normalized;
+    return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
   }
 
   async function loadCustomStyleRules() {
@@ -281,16 +242,10 @@
     const candidate = data[CUSTOM_STYLE_RULES_STORAGE_KEY];
 
     if (!Array.isArray(candidate)) {
-      debugLog("No custom style rules found in storage yet.");
       return [];
     }
 
-    const rules = candidate.filter(rule => rule && typeof rule === "object");
-    debugLog("Loaded custom style rules from storage.", {
-      totalRules: rules.length,
-    });
-
-    return rules;
+    return candidate.filter(rule => rule && typeof rule === "object");
   }
 
   function collectAnchors(root) {
@@ -382,13 +337,6 @@
 
     const styleElement = upsertCustomStyleElement();
     styleElement.textContent = cssBlocks.join("\n\n");
-
-    debugLog("Custom style pass complete.", {
-      reason,
-      hostname,
-      totalRules: rules.length,
-      appliedRules: cssBlocks.length,
-    });
   }
 
   function applyDecorations(root, seenUrlSet, trackedDomains, reason = "unknown") {
@@ -412,22 +360,9 @@
       }
     });
 
-    if (reason !== "mutation" || matchedCount > 0) {
-      debugLog("Decoration pass complete.", {
-        reason,
-        scannedAnchors: anchors.length,
-        matchedCount,
-        decoratedCount,
-        trackedDomainCount: trackedDomains.length,
-      });
-    }
   }
 
   async function setupCustomStyleInjector() {
-    debugLog("Setting up custom style injector.", {
-      href: window.location.href,
-    });
-
     let rules = await loadCustomStyleRules();
     applyCustomStyles(rules, "initial");
 
@@ -451,10 +386,6 @@
   }
 
   async function setupSeenLinkDecorator() {
-    debugLog("Setting up tracked-domain link decorator.", {
-      href: window.location.href,
-    });
-
     ensureDecoratorStyle();
 
     const [seenMap, initialHistoryDomains] = await Promise.all([
@@ -464,12 +395,6 @@
 
     let seenUrlSet = new Set(Object.keys(seenMap));
     let historyDomains = initialHistoryDomains;
-
-    debugLog("Initial tracked-domain decorator state ready.", {
-      seenCount: seenUrlSet.size,
-      totalDomains: historyDomains.length,
-      domains: historyDomains,
-    });
 
     applyDecorations(document, seenUrlSet, historyDomains, "initial");
 
@@ -524,25 +449,15 @@
         return;
       }
 
-      debugLog("Storage changed; refreshing tracked-domain decorations.", {
-        seenCount: seenUrlSet.size,
-        totalDomains: historyDomains.length,
-        domains: historyDomains,
-      });
-
       applyDecorations(document, seenUrlSet, historyDomains, "storage-change");
     });
   }
 
-  void setupCustomStyleInjector().catch(error => {
-    debugError("Failed to set up custom style injector.", error);
+  void setupCustomStyleInjector().catch(() => {
+    // Intentionally ignored.
   });
 
-  debugLog("Content script initialized.", {
-    href: window.location.href,
-  });
-
-  void setupSeenLinkDecorator().catch(error => {
-    debugError("Failed to set up tracked-domain link decorator.", error);
+  void setupSeenLinkDecorator().catch(() => {
+    // Intentionally ignored.
   });
 })();

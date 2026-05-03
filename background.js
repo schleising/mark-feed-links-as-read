@@ -5,32 +5,9 @@ const LEGACY_SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
 const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
 const MAX_LINKS = 5000;
 const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
-const DEBUG = true;
-const DEBUG_PREFIX = "[MFLAR][BG]";
 
 let trackedHistoryDomains = [];
 let trackedHistoryDomainsLoaded = false;
-
-function debugLog(message, details) {
-  if (!DEBUG) {
-    return;
-  }
-
-  if (typeof details === "undefined") {
-    console.log(`${DEBUG_PREFIX} ${message}`);
-    return;
-  }
-
-  console.log(`${DEBUG_PREFIX} ${message}`, details);
-}
-
-function debugError(message, error) {
-  if (!DEBUG) {
-    return;
-  }
-
-  console.error(`${DEBUG_PREFIX} ${message}`, error);
-}
 
 function normalizeDomainPattern(rawPattern) {
   let pattern = String(rawPattern || "").trim().toLowerCase();
@@ -165,12 +142,8 @@ async function maybeMigrateLegacySeenLinkMap() {
 
     const pruned = pruneSeenLinkMap(legacy);
     await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
-
-    debugLog("Migrated legacy seen-link map to generic storage key.", {
-      totalStored: Object.keys(pruned).length,
-    });
-  } catch (error) {
-    debugError("Failed migrating legacy seen-link map.", error);
+  } catch (_error) {
+    // Intentionally ignored; migration will retry on next startup/event.
   }
 }
 
@@ -183,14 +156,8 @@ async function refreshTrackedHistoryDomains(reason) {
   try {
     trackedHistoryDomains = await loadTrackedHistoryDomains();
     trackedHistoryDomainsLoaded = true;
-
-    debugLog("Loaded tracked history domains.", {
-      reason,
-      totalDomains: trackedHistoryDomains.length,
-      domains: trackedHistoryDomains,
-    });
-  } catch (error) {
-    debugError("Failed loading tracked history domains.", error);
+  } catch (_error) {
+    // Intentionally ignored; domains will retry on next load path.
   }
 }
 
@@ -224,15 +191,8 @@ async function markSeenUrl(normalizedUrl, reason, details = {}) {
 
     const pruned = pruneSeenLinkMap(linkMap);
     await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
-
-    debugLog("Marked tracked-domain link as seen from background.", {
-      reason,
-      normalizedUrl,
-      totalStored: Object.keys(pruned).length,
-      ...details,
-    });
-  } catch (error) {
-    debugError("Failed to mark link as seen from background.", error);
+  } catch (_error) {
+    // Intentionally ignored; failed writes should not break navigation handlers.
   }
 }
 
@@ -254,29 +214,12 @@ async function handleCommittedNavigation(details) {
   });
 }
 
-async function handleTabUpdatedUrl(tabId, rawUrl, reason) {
-  await ensureTrackedHistoryDomainsLoaded();
-
-  const normalizedUrl = normalizeTrackedUrl(rawUrl, trackedHistoryDomains);
-  if (normalizedUrl === "") {
-    return;
-  }
-
-  await markSeenUrl(normalizedUrl, reason, {
-    tabId,
-  });
-}
-
 chrome.runtime.onInstalled.addListener(() => {
-  debugLog("Background service worker installed.");
-
   void maybeMigrateLegacySeenLinkMap();
   void refreshTrackedHistoryDomains("onInstalled");
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  debugLog("Background service worker started.");
-
   void maybeMigrateLegacySeenLinkMap();
   void refreshTrackedHistoryDomains("onStartup");
 });
@@ -291,22 +234,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   trackedHistoryDomains = normalizeHistoryDomains(changes[HISTORY_DOMAINS_STORAGE_KEY].newValue);
   trackedHistoryDomainsLoaded = true;
-
-  debugLog("Tracked history domains updated from storage change.", {
-    totalDomains: trackedHistoryDomains.length,
-    domains: trackedHistoryDomains,
-  });
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (typeof changeInfo.url === "string") {
-    void handleTabUpdatedUrl(tabId, changeInfo.url, "tabs.onUpdated-url");
-    return;
-  }
-
-  if (changeInfo.status === "complete" && typeof tab.url === "string") {
-    void handleTabUpdatedUrl(tabId, tab.url, "tabs.onUpdated-complete");
-  }
 });
 
 chrome.webNavigation.onCommitted.addListener(details => {
