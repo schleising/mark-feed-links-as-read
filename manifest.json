@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Mark Feed Links as Read",
+  "version": "0.0.0",
+  "description": "Marks New Scientist links as seen when opened from Feeds and decorates matching links on newscientist.com.",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
