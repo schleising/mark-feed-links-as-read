@@ -1,7 +1,8 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "seenNewScientistArticleLinksV1";
+  const SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
+  const CUSTOM_STYLE_RULES_STORAGE_KEY = "customStyleRulesV1";
   const DECORATED_CLASS = "mflar-seen-from-feeds";
   const DEBUG = true;
   const DEBUG_PREFIX = "[MFLAR]";
@@ -51,9 +52,67 @@
     return hostname === "newscientist.com" || hostname === "www.newscientist.com";
   }
 
+  function normalizeDomainPattern(rawPattern) {
+    let pattern = String(rawPattern || "").trim().toLowerCase();
+    if (pattern === "") {
+      return "";
+    }
+
+    if (pattern.startsWith("http://") || pattern.startsWith("https://")) {
+      try {
+        pattern = new URL(pattern).hostname.toLowerCase();
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    if (pattern.includes("/")) {
+      pattern = pattern.split("/")[0];
+    }
+
+    if (pattern.startsWith(".")) {
+      pattern = pattern.slice(1);
+    }
+
+    return pattern;
+  }
+
+  function escapeRegexLiteral(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function doesDomainPatternMatch(rawPattern, rawHostname) {
+    const pattern = normalizeDomainPattern(rawPattern);
+    const hostname = String(rawHostname || "").trim().toLowerCase().replace(/\.$/, "");
+
+    if (pattern === "" || hostname === "") {
+      return false;
+    }
+
+    if (pattern === "*") {
+      return true;
+    }
+
+    if (pattern.startsWith("*.")) {
+      const baseHost = pattern.slice(2);
+      if (baseHost === "") {
+        return false;
+      }
+
+      return hostname === baseHost || hostname.endsWith(`.${baseHost}`);
+    }
+
+    if (!pattern.includes("*")) {
+      return hostname === pattern;
+    }
+
+    const wildcardRegex = new RegExp(`^${pattern.split("*").map(escapeRegexLiteral).join(".*")}$`);
+    return wildcardRegex.test(hostname);
+  }
+
   async function loadSeenLinkMap() {
-    const data = await chrome.storage.local.get(STORAGE_KEY);
-    const candidate = data[STORAGE_KEY];
+    const data = await chrome.storage.local.get(SEEN_LINK_STORAGE_KEY);
+    const candidate = data[SEEN_LINK_STORAGE_KEY];
     if (!candidate || typeof candidate !== "object") {
       debugLog("No seen-link map found in storage yet.");
       return {};
@@ -64,6 +123,23 @@
     });
 
     return candidate;
+  }
+
+  async function loadCustomStyleRules() {
+    const data = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
+    const candidate = data[CUSTOM_STYLE_RULES_STORAGE_KEY];
+
+    if (!Array.isArray(candidate)) {
+      debugLog("No custom style rules found in storage yet.");
+      return [];
+    }
+
+    const rules = candidate.filter(rule => rule && typeof rule === "object");
+    debugLog("Loaded custom style rules from storage.", {
+      totalRules: rules.length,
+    });
+
+    return rules;
   }
 
   function collectAnchors(root) {
@@ -104,29 +180,64 @@
     head.appendChild(style);
   }
 
-  function ensureScrollbarStyle() {
-    const existing = document.getElementById("mflar-scrollbar-style");
-    if (existing) {
-      return;
+  function upsertCustomStyleElement() {
+    const existing = document.getElementById("mflar-custom-style");
+    if (existing instanceof HTMLStyleElement) {
+      return existing;
     }
 
     const style = document.createElement("style");
-    style.id = "mflar-scrollbar-style";
-    style.textContent = [
-      "html,",
-      "body {",
-      "  scrollbar-width: auto !important;",
-      "  scrollbar-color: rgba(128, 128, 128, 0.8) #F1F1F1 !important;",
-      "}"
-    ].join("\n");
+    style.id = "mflar-custom-style";
 
     const head = document.head || document.documentElement;
     head.appendChild(style);
+
+    return style;
   }
 
-  function isSubstackPage() {
+  function buildCustomCssRule(rule) {
+    const selector = String(rule.selector || "").trim();
+    const declarations = String(rule.declarations || "").trim();
+
+    if (selector === "" || declarations === "") {
+      return "";
+    }
+
+    return `${selector} {\n${declarations}\n}`;
+  }
+
+  function applyCustomStyles(rules, reason = "unknown") {
     const hostname = String(window.location.hostname || "").toLowerCase();
-    return hostname === "substack.com" || hostname === "www.substack.com" || hostname.endsWith(".substack.com");
+    const cssBlocks = [];
+
+    rules.forEach(rule => {
+      if (!rule || typeof rule !== "object") {
+        return;
+      }
+
+      if (rule.enabled === false) {
+        return;
+      }
+
+      if (!doesDomainPatternMatch(rule.domainPattern, hostname)) {
+        return;
+      }
+
+      const cssRule = buildCustomCssRule(rule);
+      if (cssRule !== "") {
+        cssBlocks.push(cssRule);
+      }
+    });
+
+    const styleElement = upsertCustomStyleElement();
+    styleElement.textContent = cssBlocks.join("\n\n");
+
+    debugLog("Custom style pass complete.", {
+      reason,
+      hostname,
+      totalRules: rules.length,
+      appliedRules: cssBlocks.length,
+    });
   }
 
   function applyDecorations(root, seenUrlSet, reason = "unknown") {
@@ -159,6 +270,33 @@
     }
   }
 
+  async function setupCustomStyleInjector() {
+    debugLog("Setting up custom style injector.", {
+      href: window.location.href,
+    });
+
+    let rules = await loadCustomStyleRules();
+    applyCustomStyles(rules, "initial");
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (
+        areaName !== "local" ||
+        !Object.prototype.hasOwnProperty.call(changes, CUSTOM_STYLE_RULES_STORAGE_KEY)
+      ) {
+        return;
+      }
+
+      const newValue = changes[CUSTOM_STYLE_RULES_STORAGE_KEY].newValue;
+      if (!Array.isArray(newValue)) {
+        rules = [];
+      } else {
+        rules = newValue.filter(rule => rule && typeof rule === "object");
+      }
+
+      applyCustomStyles(rules, "storage-change");
+    });
+  }
+
   async function setupNewScientistDecorator() {
     debugLog("Setting up New Scientist decorator.", {
       href: window.location.href,
@@ -189,11 +327,11 @@
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "local" || !Object.prototype.hasOwnProperty.call(changes, STORAGE_KEY)) {
+      if (areaName !== "local" || !Object.prototype.hasOwnProperty.call(changes, SEEN_LINK_STORAGE_KEY)) {
         return;
       }
 
-      const newValue = changes[STORAGE_KEY].newValue;
+      const newValue = changes[SEEN_LINK_STORAGE_KEY].newValue;
       if (!newValue || typeof newValue !== "object") {
         seenUrlSet = new Set();
       } else {
@@ -208,19 +346,19 @@
   }
 
   const newScientistPage = isNewScientistPage();
-  const substackPage = isSubstackPage();
 
-  if (newScientistPage || substackPage) {
-    ensureScrollbarStyle();
-  }
+  void setupCustomStyleInjector().catch(error => {
+    debugError("Failed to set up custom style injector.", error);
+  });
 
   debugLog("Content script initialized.", {
     href: window.location.href,
     newScientistPage,
-    substackPage,
   });
 
   if (newScientistPage) {
-    setupNewScientistDecorator();
+    void setupNewScientistDecorator().catch(error => {
+      debugError("Failed to set up New Scientist decorator.", error);
+    });
   }
 })();

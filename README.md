@@ -8,7 +8,7 @@ New Scientist links when browser visited-link partitioning is enabled.
 - Watches browser tab/navigation loads.
 - Marks New Scientist article pages as seen regardless of where they were opened from.
 - Stores a local seen-link set in `chrome.storage.local`.
-- Injects custom scrollbar styling on `newscientist.com` and `substack.com` pages.
+- Provides a built-in options UI for simple per-domain custom CSS rules.
 - On `newscientist.com`, decorates matching links with a CSS class so they can
 	appear "read" independently of `:visited`.
 
@@ -24,13 +24,24 @@ a.mflar-seen-from-feeds,
 a.mflar-seen-from-feeds * {
 	color: dimgrey !important;
 }
-
-html,
-body {
-	scrollbar-width: auto !important;
-	scrollbar-color: rgba(128, 128, 128, 0.8) #F1F1F1 !important;
-}
 ```
+
+Scrollbar styling is no longer hardcoded. Add scrollbar rules through Extension
+options using the custom style UI.
+
+## Custom style UI
+
+Open the extension Options page to add simple rules:
+
+1. Open `chrome://extensions`.
+2. Find this extension and click `Details`.
+3. Click `Extension options`.
+4. Add:
+	- Domain pattern (for example `*`, `example.com`, or `*.example.com`)
+	- Selector (for example `html, body`)
+	- CSS declarations (for example `scrollbar-width: auto !important;`)
+
+Rules are saved in `chrome.storage.local` and applied live on matching pages.
 
 ## Install (unpacked)
 
