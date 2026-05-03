@@ -214,32 +214,59 @@
   }
 
   async function loadSeenLinkMap() {
-    const data = await chrome.storage.local.get([
+    const localData = await chrome.storage.local.get([
       SEEN_LINK_STORAGE_KEY,
       LEGACY_SEEN_LINK_STORAGE_KEY,
     ]);
 
-    const current = data[SEEN_LINK_STORAGE_KEY];
+    const current = localData[SEEN_LINK_STORAGE_KEY];
     if (current && typeof current === "object") {
       return current;
     }
 
-    const legacy = data[LEGACY_SEEN_LINK_STORAGE_KEY];
+    const legacy = localData[LEGACY_SEEN_LINK_STORAGE_KEY];
     if (legacy && typeof legacy === "object") {
       return legacy;
+    }
+
+    const syncData = await chrome.storage.sync.get([
+      SEEN_LINK_STORAGE_KEY,
+      LEGACY_SEEN_LINK_STORAGE_KEY,
+    ]);
+
+    const syncCurrent = syncData[SEEN_LINK_STORAGE_KEY];
+    if (syncCurrent && typeof syncCurrent === "object") {
+      return syncCurrent;
+    }
+
+    const syncLegacy = syncData[LEGACY_SEEN_LINK_STORAGE_KEY];
+    if (syncLegacy && typeof syncLegacy === "object") {
+      return syncLegacy;
     }
 
     return {};
   }
 
   async function loadHistoryDomains() {
-    const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
-    return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+    const syncData = await chrome.storage.sync.get(HISTORY_DOMAINS_STORAGE_KEY);
+    if (Array.isArray(syncData[HISTORY_DOMAINS_STORAGE_KEY])) {
+      return normalizeHistoryDomains(syncData[HISTORY_DOMAINS_STORAGE_KEY]);
+    }
+
+    const localData = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+    return normalizeHistoryDomains(localData[HISTORY_DOMAINS_STORAGE_KEY]);
   }
 
   async function loadCustomStyleRules() {
-    const data = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
-    const candidate = data[CUSTOM_STYLE_RULES_STORAGE_KEY];
+    const syncData = await chrome.storage.sync.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
+    const syncCandidate = syncData[CUSTOM_STYLE_RULES_STORAGE_KEY];
+
+    if (Array.isArray(syncCandidate)) {
+      return syncCandidate.filter(rule => rule && typeof rule === "object");
+    }
+
+    const localData = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
+    const candidate = localData[CUSTOM_STYLE_RULES_STORAGE_KEY];
 
     if (!Array.isArray(candidate)) {
       return [];
@@ -368,7 +395,7 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (
-        areaName !== "local" ||
+        areaName !== "sync" ||
         !Object.prototype.hasOwnProperty.call(changes, CUSTOM_STYLE_RULES_STORAGE_KEY)
       ) {
         return;
@@ -414,13 +441,16 @@
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "local") {
+      if (areaName !== "local" && areaName !== "sync") {
         return;
       }
 
       let shouldRefreshDecorations = false;
 
-      if (Object.prototype.hasOwnProperty.call(changes, SEEN_LINK_STORAGE_KEY)) {
+      if (
+        areaName === "local" &&
+        Object.prototype.hasOwnProperty.call(changes, SEEN_LINK_STORAGE_KEY)
+      ) {
         const newValue = changes[SEEN_LINK_STORAGE_KEY].newValue;
         if (newValue && typeof newValue === "object") {
           seenUrlSet = new Set(Object.keys(newValue));
@@ -429,7 +459,10 @@
         }
 
         shouldRefreshDecorations = true;
-      } else if (Object.prototype.hasOwnProperty.call(changes, LEGACY_SEEN_LINK_STORAGE_KEY)) {
+      } else if (
+        areaName === "local" &&
+        Object.prototype.hasOwnProperty.call(changes, LEGACY_SEEN_LINK_STORAGE_KEY)
+      ) {
         const legacyValue = changes[LEGACY_SEEN_LINK_STORAGE_KEY].newValue;
         if (legacyValue && typeof legacyValue === "object") {
           seenUrlSet = new Set(Object.keys(legacyValue));
@@ -440,7 +473,10 @@
         shouldRefreshDecorations = true;
       }
 
-      if (Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)) {
+      if (
+        areaName === "sync" &&
+        Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)
+      ) {
         historyDomains = normalizeHistoryDomains(changes[HISTORY_DOMAINS_STORAGE_KEY].newValue);
         shouldRefreshDecorations = true;
       }

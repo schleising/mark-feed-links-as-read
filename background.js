@@ -3,8 +3,7 @@
 const SEEN_LINK_STORAGE_KEY = "seenHistoryLinksV1";
 const LEGACY_SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
 const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
-const MAX_LINKS = 5000;
-const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+const CUSTOM_STYLE_RULES_STORAGE_KEY = "customStyleRulesV1";
 
 let trackedHistoryDomains = [];
 let trackedHistoryDomainsLoaded = false;
@@ -49,6 +48,26 @@ function normalizeHistoryDomains(candidateDomains) {
   });
 
   return Array.from(unique);
+}
+
+function normalizeCustomStyleRules(candidateRules) {
+  if (!Array.isArray(candidateRules)) {
+    return [];
+  }
+
+  return candidateRules.filter(rule => rule && typeof rule === "object");
+}
+
+function normalizeSeenLinkMap(candidateMap) {
+  if (!candidateMap || typeof candidateMap !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(candidateMap).filter(
+      ([url, timestamp]) => typeof url === "string" && typeof timestamp === "number" && timestamp > 0
+    )
+  );
 }
 
 function escapeRegexLiteral(value) {
@@ -105,59 +124,112 @@ function normalizeTrackedUrl(rawUrl, trackedDomains) {
 }
 
 async function loadSeenLinkMap() {
-  const data = await chrome.storage.local.get([
+  const localData = await chrome.storage.local.get([
     SEEN_LINK_STORAGE_KEY,
     LEGACY_SEEN_LINK_STORAGE_KEY,
   ]);
 
-  const primaryCandidate = data[SEEN_LINK_STORAGE_KEY];
-  if (primaryCandidate && typeof primaryCandidate === "object") {
-    return primaryCandidate;
+  const localPrimary = normalizeSeenLinkMap(localData[SEEN_LINK_STORAGE_KEY]);
+  if (Object.keys(localPrimary).length > 0) {
+    return localPrimary;
   }
 
-  const legacyCandidate = data[LEGACY_SEEN_LINK_STORAGE_KEY];
-  if (legacyCandidate && typeof legacyCandidate === "object") {
-    return legacyCandidate;
+  const localLegacy = normalizeSeenLinkMap(localData[LEGACY_SEEN_LINK_STORAGE_KEY]);
+  if (Object.keys(localLegacy).length > 0) {
+    return localLegacy;
+  }
+
+  const syncData = await chrome.storage.sync.get([
+    SEEN_LINK_STORAGE_KEY,
+    LEGACY_SEEN_LINK_STORAGE_KEY,
+  ]);
+
+  const syncPrimary = normalizeSeenLinkMap(syncData[SEEN_LINK_STORAGE_KEY]);
+  if (Object.keys(syncPrimary).length > 0) {
+    return syncPrimary;
+  }
+
+  const syncLegacy = normalizeSeenLinkMap(syncData[LEGACY_SEEN_LINK_STORAGE_KEY]);
+  if (Object.keys(syncLegacy).length > 0) {
+    return syncLegacy;
   }
 
   return {};
 }
 
-async function maybeMigrateLegacySeenLinkMap() {
+async function migrateStorageData() {
   try {
-    const data = await chrome.storage.local.get([
-      SEEN_LINK_STORAGE_KEY,
-      LEGACY_SEEN_LINK_STORAGE_KEY,
+    const [localData, syncData] = await Promise.all([
+      chrome.storage.local.get([
+        SEEN_LINK_STORAGE_KEY,
+        LEGACY_SEEN_LINK_STORAGE_KEY,
+        HISTORY_DOMAINS_STORAGE_KEY,
+        CUSTOM_STYLE_RULES_STORAGE_KEY,
+      ]),
+      chrome.storage.sync.get([
+        SEEN_LINK_STORAGE_KEY,
+        LEGACY_SEEN_LINK_STORAGE_KEY,
+        HISTORY_DOMAINS_STORAGE_KEY,
+        CUSTOM_STYLE_RULES_STORAGE_KEY,
+      ]),
     ]);
 
-    const current = data[SEEN_LINK_STORAGE_KEY];
-    if (current && typeof current === "object") {
-      return;
+    const localSeenPrimary = normalizeSeenLinkMap(localData[SEEN_LINK_STORAGE_KEY]);
+    const localSeenLegacy = normalizeSeenLinkMap(localData[LEGACY_SEEN_LINK_STORAGE_KEY]);
+
+    if (Object.keys(localSeenPrimary).length === 0 && Object.keys(localSeenLegacy).length === 0) {
+      const syncSeenPrimary = normalizeSeenLinkMap(syncData[SEEN_LINK_STORAGE_KEY]);
+      const syncSeenLegacy = normalizeSeenLinkMap(syncData[LEGACY_SEEN_LINK_STORAGE_KEY]);
+      const candidate =
+        Object.keys(syncSeenPrimary).length > 0
+          ? syncSeenPrimary
+          : Object.keys(syncSeenLegacy).length > 0
+            ? syncSeenLegacy
+            : null;
+
+      if (candidate) {
+        await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: candidate });
+      }
     }
 
-    const legacy = data[LEGACY_SEEN_LINK_STORAGE_KEY];
-    if (!legacy || typeof legacy !== "object") {
-      return;
+    if (!Array.isArray(syncData[HISTORY_DOMAINS_STORAGE_KEY])) {
+      const normalizedDomains = normalizeHistoryDomains(localData[HISTORY_DOMAINS_STORAGE_KEY]);
+      if (normalizedDomains.length > 0) {
+        await chrome.storage.sync.set({
+          [HISTORY_DOMAINS_STORAGE_KEY]: normalizedDomains,
+        });
+      }
     }
 
-    const pruned = pruneSeenLinkMap(legacy);
-    await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
+    if (!Array.isArray(syncData[CUSTOM_STYLE_RULES_STORAGE_KEY])) {
+      const normalizedRules = normalizeCustomStyleRules(localData[CUSTOM_STYLE_RULES_STORAGE_KEY]);
+      if (normalizedRules.length > 0) {
+        await chrome.storage.sync.set({
+          [CUSTOM_STYLE_RULES_STORAGE_KEY]: normalizedRules,
+        });
+      }
+    }
   } catch (_error) {
-    // Intentionally ignored; migration will retry on next startup/event.
+    // Intentionally ignored.
   }
 }
 
 async function loadTrackedHistoryDomains() {
-  const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
-  return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+  const syncData = await chrome.storage.sync.get(HISTORY_DOMAINS_STORAGE_KEY);
+  if (Array.isArray(syncData[HISTORY_DOMAINS_STORAGE_KEY])) {
+    return normalizeHistoryDomains(syncData[HISTORY_DOMAINS_STORAGE_KEY]);
+  }
+
+  const localData = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+  return normalizeHistoryDomains(localData[HISTORY_DOMAINS_STORAGE_KEY]);
 }
 
-async function refreshTrackedHistoryDomains(reason) {
+async function refreshTrackedHistoryDomains() {
   try {
     trackedHistoryDomains = await loadTrackedHistoryDomains();
     trackedHistoryDomainsLoaded = true;
   } catch (_error) {
-    // Intentionally ignored; domains will retry on next load path.
+    // Intentionally ignored.
   }
 }
 
@@ -166,21 +238,10 @@ async function ensureTrackedHistoryDomainsLoaded() {
     return;
   }
 
-  await refreshTrackedHistoryDomains("lazy-load");
+  await refreshTrackedHistoryDomains();
 }
 
-function pruneSeenLinkMap(linkMap) {
-  const now = Date.now();
-  const entries = Object.entries(linkMap)
-    .filter(([url, timestamp]) => typeof url === "string" && typeof timestamp === "number")
-    .filter(([, timestamp]) => timestamp > 0 && now - timestamp <= RETENTION_MS)
-    .sort((a, b) => b[1] - a[1]);
-
-  const prunedEntries = entries.slice(0, MAX_LINKS);
-  return Object.fromEntries(prunedEntries);
-}
-
-async function markSeenUrl(normalizedUrl, reason, details = {}) {
+async function markSeenUrl(normalizedUrl) {
   if (normalizedUrl === "") {
     return;
   }
@@ -188,11 +249,11 @@ async function markSeenUrl(normalizedUrl, reason, details = {}) {
   try {
     const linkMap = await loadSeenLinkMap();
     linkMap[normalizedUrl] = Date.now();
-
-    const pruned = pruneSeenLinkMap(linkMap);
-    await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
+    await chrome.storage.local.set({
+      [SEEN_LINK_STORAGE_KEY]: linkMap,
+    });
   } catch (_error) {
-    // Intentionally ignored; failed writes should not break navigation handlers.
+    // Intentionally ignored.
   }
 }
 
@@ -208,25 +269,22 @@ async function handleCommittedNavigation(details) {
     return;
   }
 
-  await markSeenUrl(normalizedUrl, "webNavigation.onCommitted", {
-    tabId: details.tabId,
-    transitionType: details.transitionType,
-  });
+  await markSeenUrl(normalizedUrl);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void maybeMigrateLegacySeenLinkMap();
-  void refreshTrackedHistoryDomains("onInstalled");
+  void migrateStorageData();
+  void refreshTrackedHistoryDomains();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void maybeMigrateLegacySeenLinkMap();
-  void refreshTrackedHistoryDomains("onStartup");
+  void migrateStorageData();
+  void refreshTrackedHistoryDomains();
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (
-    areaName !== "local" ||
+    areaName !== "sync" ||
     !Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)
   ) {
     return;
@@ -240,5 +298,5 @@ chrome.webNavigation.onCommitted.addListener(details => {
   void handleCommittedNavigation(details);
 });
 
-void maybeMigrateLegacySeenLinkMap();
-void refreshTrackedHistoryDomains("startup-eval");
+void migrateStorageData();
+void refreshTrackedHistoryDomains();

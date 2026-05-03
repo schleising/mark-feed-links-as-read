@@ -8,7 +8,7 @@ links on domains you configure.
 - Watches browser tab/navigation loads.
 - Saves links as seen only when the destination URL matches a configured
 	history domain pattern.
-- Stores seen-link history in `chrome.storage.local`.
+- Stores seen-link URL history in `chrome.storage.local`.
 - Decorates matching links with a CSS class so they can appear "read"
 	independently of `:visited`.
 - Provides a built-in options UI for:
@@ -50,7 +50,8 @@ Configure custom styles:
 1. Add a style rule with domain pattern, selector, and declarations.
 2. Example declarations: `scrollbar-width: auto !important;`
 
-Rules are saved in `chrome.storage.local` and applied live on matching pages.
+Settings (history domains and CSS rules) are saved in `chrome.storage.sync`
+and applied live on matching pages.
 
 ## Install (unpacked)
 
@@ -61,9 +62,10 @@ Rules are saved in `chrome.storage.local` and applied live on matching pages.
 
 ## Notes
 
-- Current extension version is `1.0.0`.
-- Seen-link history is pruned by age and capped in size.
-- Legacy seen-link storage keys are automatically migrated.
+- Current extension version is `1.2.0`.
+- URL history remains local to avoid sync storage limits.
+- Existing synced URL history is automatically migrated back to local storage.
+- Settings are synced so they follow your signed-in Chrome profile.
 
 ## Troubleshooting
 

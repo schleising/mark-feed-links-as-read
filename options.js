@@ -237,20 +237,31 @@ function clearStatus() {
 }
 
 async function saveRules() {
-  await chrome.storage.local.set({
+  await chrome.storage.sync.set({
     [CUSTOM_STYLE_RULES_STORAGE_KEY]: rules,
   });
 }
 
 async function saveHistoryDomains() {
-  await chrome.storage.local.set({
+  await chrome.storage.sync.set({
     [HISTORY_DOMAINS_STORAGE_KEY]: historyDomains,
   });
 }
 
 async function loadRules() {
-  const data = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
-  const candidate = data[CUSTOM_STYLE_RULES_STORAGE_KEY];
+  const syncData = await chrome.storage.sync.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
+  const syncCandidate = syncData[CUSTOM_STYLE_RULES_STORAGE_KEY];
+
+  if (Array.isArray(syncCandidate)) {
+    return syncCandidate
+      .filter(rule => rule && typeof rule === "object")
+      .map(normalizeRule)
+      .filter(isRuleValid)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  const localData = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
+  const candidate = localData[CUSTOM_STYLE_RULES_STORAGE_KEY];
 
   if (!Array.isArray(candidate)) {
     return [];
@@ -264,8 +275,13 @@ async function loadRules() {
 }
 
 async function loadHistoryDomains() {
-  const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
-  return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+  const syncData = await chrome.storage.sync.get(HISTORY_DOMAINS_STORAGE_KEY);
+  if (Array.isArray(syncData[HISTORY_DOMAINS_STORAGE_KEY])) {
+    return normalizeHistoryDomains(syncData[HISTORY_DOMAINS_STORAGE_KEY]);
+  }
+
+  const localData = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+  return normalizeHistoryDomains(localData[HISTORY_DOMAINS_STORAGE_KEY]);
 }
 
 function createButton(label, className, onClick) {
@@ -565,7 +581,7 @@ async function handleSubmit(event) {
 }
 
 async function handleStorageChanged(changes, areaName) {
-  if (areaName !== "local") {
+  if (areaName !== "sync") {
     return;
   }
 
