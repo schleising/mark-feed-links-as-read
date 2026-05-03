@@ -1,10 +1,15 @@
 "use strict";
 
-const STORAGE_KEY = "seenNewScientistArticleLinksV1";
+const SEEN_LINK_STORAGE_KEY = "seenHistoryLinksV1";
+const LEGACY_SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
+const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
 const MAX_LINKS = 5000;
 const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 const DEBUG = true;
 const DEBUG_PREFIX = "[MFLAR][BG]";
+
+let trackedHistoryDomains = [];
+let trackedHistoryDomainsLoaded = false;
 
 function debugLog(message, details) {
   if (!DEBUG) {
@@ -27,33 +32,174 @@ function debugError(message, error) {
   console.error(`${DEBUG_PREFIX} ${message}`, error);
 }
 
-function normalizeNewScientistArticleUrl(rawUrl) {
+function normalizeDomainPattern(rawPattern) {
+  let pattern = String(rawPattern || "").trim().toLowerCase();
+  if (pattern === "") {
+    return "";
+  }
+
+  if (pattern.startsWith("http://") || pattern.startsWith("https://")) {
+    try {
+      pattern = new URL(pattern).hostname.toLowerCase();
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  if (pattern.includes("/")) {
+    pattern = pattern.split("/")[0];
+  }
+
+  if (pattern.startsWith(".")) {
+    pattern = pattern.slice(1);
+  }
+
+  return pattern;
+}
+
+function normalizeHistoryDomains(candidateDomains) {
+  if (!Array.isArray(candidateDomains)) {
+    return [];
+  }
+
+  const unique = new Set();
+
+  candidateDomains.forEach(candidate => {
+    const normalized = normalizeDomainPattern(candidate);
+    if (normalized !== "") {
+      unique.add(normalized);
+    }
+  });
+
+  return Array.from(unique);
+}
+
+function escapeRegexLiteral(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function doesDomainPatternMatch(rawPattern, rawHostname) {
+  const pattern = normalizeDomainPattern(rawPattern);
+  const hostname = String(rawHostname || "").trim().toLowerCase().replace(/\.$/, "");
+
+  if (pattern === "" || hostname === "") {
+    return false;
+  }
+
+  if (pattern === "*") {
+    return true;
+  }
+
+  if (pattern.startsWith("*.")) {
+    const baseHost = pattern.slice(2);
+    if (baseHost === "") {
+      return false;
+    }
+
+    return hostname === baseHost || hostname.endsWith(`.${baseHost}`);
+  }
+
+  if (!pattern.includes("*")) {
+    return hostname === pattern;
+  }
+
+  const wildcardRegex = new RegExp(`^${pattern.split("*").map(escapeRegexLiteral).join(".*")}$`);
+  return wildcardRegex.test(hostname);
+}
+
+function normalizeTrackedUrl(rawUrl, trackedDomains) {
   try {
     const parsed = new URL(String(rawUrl || ""));
-    const hostname = parsed.hostname.toLowerCase();
-    if (hostname !== "newscientist.com" && hostname !== "www.newscientist.com") {
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return "";
     }
 
-    if (!parsed.pathname.toLowerCase().startsWith("/article/")) {
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+    const matchesTrackedDomain = trackedDomains.some(pattern => doesDomainPatternMatch(pattern, hostname));
+    if (!matchesTrackedDomain) {
       return "";
     }
 
-    const path = parsed.pathname.endsWith("/") ? parsed.pathname : `${parsed.pathname}/`;
-    return `https://www.newscientist.com${path}`;
+    parsed.hash = "";
+    return parsed.toString();
   } catch (_error) {
     return "";
   }
 }
 
 async function loadSeenLinkMap() {
-  const data = await chrome.storage.local.get(STORAGE_KEY);
-  const candidate = data[STORAGE_KEY];
-  if (!candidate || typeof candidate !== "object") {
-    return {};
+  const data = await chrome.storage.local.get([
+    SEEN_LINK_STORAGE_KEY,
+    LEGACY_SEEN_LINK_STORAGE_KEY,
+  ]);
+
+  const primaryCandidate = data[SEEN_LINK_STORAGE_KEY];
+  if (primaryCandidate && typeof primaryCandidate === "object") {
+    return primaryCandidate;
   }
 
-  return candidate;
+  const legacyCandidate = data[LEGACY_SEEN_LINK_STORAGE_KEY];
+  if (legacyCandidate && typeof legacyCandidate === "object") {
+    return legacyCandidate;
+  }
+
+  return {};
+}
+
+async function maybeMigrateLegacySeenLinkMap() {
+  try {
+    const data = await chrome.storage.local.get([
+      SEEN_LINK_STORAGE_KEY,
+      LEGACY_SEEN_LINK_STORAGE_KEY,
+    ]);
+
+    const current = data[SEEN_LINK_STORAGE_KEY];
+    if (current && typeof current === "object") {
+      return;
+    }
+
+    const legacy = data[LEGACY_SEEN_LINK_STORAGE_KEY];
+    if (!legacy || typeof legacy !== "object") {
+      return;
+    }
+
+    const pruned = pruneSeenLinkMap(legacy);
+    await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
+
+    debugLog("Migrated legacy seen-link map to generic storage key.", {
+      totalStored: Object.keys(pruned).length,
+    });
+  } catch (error) {
+    debugError("Failed migrating legacy seen-link map.", error);
+  }
+}
+
+async function loadTrackedHistoryDomains() {
+  const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+  return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+}
+
+async function refreshTrackedHistoryDomains(reason) {
+  try {
+    trackedHistoryDomains = await loadTrackedHistoryDomains();
+    trackedHistoryDomainsLoaded = true;
+
+    debugLog("Loaded tracked history domains.", {
+      reason,
+      totalDomains: trackedHistoryDomains.length,
+      domains: trackedHistoryDomains,
+    });
+  } catch (error) {
+    debugError("Failed loading tracked history domains.", error);
+  }
+}
+
+async function ensureTrackedHistoryDomainsLoaded() {
+  if (trackedHistoryDomainsLoaded) {
+    return;
+  }
+
+  await refreshTrackedHistoryDomains("lazy-load");
 }
 
 function pruneSeenLinkMap(linkMap) {
@@ -77,9 +223,9 @@ async function markSeenUrl(normalizedUrl, reason, details = {}) {
     linkMap[normalizedUrl] = Date.now();
 
     const pruned = pruneSeenLinkMap(linkMap);
-    await chrome.storage.local.set({ [STORAGE_KEY]: pruned });
+    await chrome.storage.local.set({ [SEEN_LINK_STORAGE_KEY]: pruned });
 
-    debugLog("Marked New Scientist link as seen from background.", {
+    debugLog("Marked tracked-domain link as seen from background.", {
       reason,
       normalizedUrl,
       totalStored: Object.keys(pruned).length,
@@ -95,7 +241,9 @@ async function handleCommittedNavigation(details) {
     return;
   }
 
-  const normalizedUrl = normalizeNewScientistArticleUrl(details.url);
+  await ensureTrackedHistoryDomainsLoaded();
+
+  const normalizedUrl = normalizeTrackedUrl(details.url, trackedHistoryDomains);
   if (normalizedUrl === "") {
     return;
   }
@@ -107,7 +255,9 @@ async function handleCommittedNavigation(details) {
 }
 
 async function handleTabUpdatedUrl(tabId, rawUrl, reason) {
-  const normalizedUrl = normalizeNewScientistArticleUrl(rawUrl);
+  await ensureTrackedHistoryDomainsLoaded();
+
+  const normalizedUrl = normalizeTrackedUrl(rawUrl, trackedHistoryDomains);
   if (normalizedUrl === "") {
     return;
   }
@@ -119,10 +269,33 @@ async function handleTabUpdatedUrl(tabId, rawUrl, reason) {
 
 chrome.runtime.onInstalled.addListener(() => {
   debugLog("Background service worker installed.");
+
+  void maybeMigrateLegacySeenLinkMap();
+  void refreshTrackedHistoryDomains("onInstalled");
 });
 
 chrome.runtime.onStartup.addListener(() => {
   debugLog("Background service worker started.");
+
+  void maybeMigrateLegacySeenLinkMap();
+  void refreshTrackedHistoryDomains("onStartup");
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (
+    areaName !== "local" ||
+    !Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)
+  ) {
+    return;
+  }
+
+  trackedHistoryDomains = normalizeHistoryDomains(changes[HISTORY_DOMAINS_STORAGE_KEY].newValue);
+  trackedHistoryDomainsLoaded = true;
+
+  debugLog("Tracked history domains updated from storage change.", {
+    totalDomains: trackedHistoryDomains.length,
+    domains: trackedHistoryDomains,
+  });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -139,3 +312,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.webNavigation.onCommitted.addListener(details => {
   void handleCommittedNavigation(details);
 });
+
+void maybeMigrateLegacySeenLinkMap();
+void refreshTrackedHistoryDomains("startup-eval");

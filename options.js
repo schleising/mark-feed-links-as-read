@@ -1,6 +1,12 @@
 "use strict";
 
 const CUSTOM_STYLE_RULES_STORAGE_KEY = "customStyleRulesV1";
+const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
+
+const historyDomainForm = document.getElementById("history-domain-form");
+const historyDomainInput = document.getElementById("history-domain-input");
+const historyDomainList = document.getElementById("history-domain-list");
+const historyDomainEmpty = document.getElementById("history-domain-empty");
 
 const ruleForm = document.getElementById("rule-form");
 const formTitle = document.getElementById("form-title");
@@ -15,6 +21,7 @@ const emptyState = document.getElementById("empty-state");
 const cancelEditButton = document.getElementById("cancel-edit");
 
 let rules = [];
+let historyDomains = [];
 let editingRuleId = "";
 
 function createRuleId() {
@@ -61,6 +68,23 @@ function normalizeRule(rawRule) {
   };
 }
 
+function normalizeHistoryDomains(candidateDomains) {
+  if (!Array.isArray(candidateDomains)) {
+    return [];
+  }
+
+  const unique = new Set();
+
+  candidateDomains.forEach(candidate => {
+    const normalized = normalizeDomainPattern(candidate);
+    if (normalized !== "") {
+      unique.add(normalized);
+    }
+  });
+
+  return Array.from(unique).sort((a, b) => a.localeCompare(b));
+}
+
 function isRuleValid(rule) {
   return (
     typeof rule.domainPattern === "string" &&
@@ -88,6 +112,12 @@ async function saveRules() {
   });
 }
 
+async function saveHistoryDomains() {
+  await chrome.storage.local.set({
+    [HISTORY_DOMAINS_STORAGE_KEY]: historyDomains,
+  });
+}
+
 async function loadRules() {
   const data = await chrome.storage.local.get(CUSTOM_STYLE_RULES_STORAGE_KEY);
   const candidate = data[CUSTOM_STYLE_RULES_STORAGE_KEY];
@@ -103,6 +133,11 @@ async function loadRules() {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+async function loadHistoryDomains() {
+  const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+  return normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+}
+
 function createButton(label, className, onClick) {
   const button = document.createElement("button");
   button.type = "button";
@@ -110,6 +145,42 @@ function createButton(label, className, onClick) {
   button.className = className;
   button.addEventListener("click", onClick);
   return button;
+}
+
+function renderHistoryDomains() {
+  historyDomainList.innerHTML = "";
+
+  if (historyDomains.length === 0) {
+    historyDomainEmpty.hidden = false;
+    return;
+  }
+
+  historyDomainEmpty.hidden = true;
+
+  historyDomains.forEach(domainPattern => {
+    const chip = document.createElement("div");
+    chip.className = "history-domain-chip";
+
+    const label = document.createElement("span");
+    label.textContent = domainPattern;
+
+    const removeButton = createButton("Remove", "secondary", async () => {
+      historyDomains = historyDomains.filter(candidate => candidate !== domainPattern);
+
+      try {
+        await saveHistoryDomains();
+        renderHistoryDomains();
+        setStatus("History domain removed.", "success");
+      } catch (error) {
+        setStatus(`Could not remove history domain: ${error.message}`, "error");
+      }
+    });
+
+    chip.appendChild(label);
+    chip.appendChild(removeButton);
+
+    historyDomainList.appendChild(chip);
+  });
 }
 
 function renderRules() {
@@ -275,6 +346,36 @@ function readFormRule() {
   };
 }
 
+async function handleHistoryDomainSubmit(event) {
+  event.preventDefault();
+
+  const domainPattern = normalizeDomainPattern(historyDomainInput.value);
+  if (domainPattern === "") {
+    setStatus("History domain pattern is required.", "error");
+    historyDomainInput.focus();
+    return;
+  }
+
+  if (historyDomains.includes(domainPattern)) {
+    setStatus("History domain already exists.", "error");
+    historyDomainInput.focus();
+    historyDomainInput.select();
+    return;
+  }
+
+  historyDomains = normalizeHistoryDomains([...historyDomains, domainPattern]);
+
+  try {
+    await saveHistoryDomains();
+    renderHistoryDomains();
+    historyDomainForm.reset();
+    historyDomainInput.focus();
+    setStatus("History domain added.", "success");
+  } catch (error) {
+    setStatus(`Could not add history domain: ${error.message}`, "error");
+  }
+}
+
 async function handleSubmit(event) {
   event.preventDefault();
 
@@ -332,31 +433,44 @@ async function handleSubmit(event) {
 }
 
 async function handleStorageChanged(changes, areaName) {
-  if (
-    areaName !== "local" ||
-    !Object.prototype.hasOwnProperty.call(changes, CUSTOM_STYLE_RULES_STORAGE_KEY)
-  ) {
+  if (areaName !== "local") {
     return;
   }
 
-  const newValue = changes[CUSTOM_STYLE_RULES_STORAGE_KEY].newValue;
-  if (!Array.isArray(newValue)) {
-    rules = [];
-  } else {
-    rules = newValue
-      .filter(rule => rule && typeof rule === "object")
-      .map(normalizeRule)
-      .filter(isRuleValid)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+  if (Object.prototype.hasOwnProperty.call(changes, CUSTOM_STYLE_RULES_STORAGE_KEY)) {
+    const newValue = changes[CUSTOM_STYLE_RULES_STORAGE_KEY].newValue;
+    if (!Array.isArray(newValue)) {
+      rules = [];
+    } else {
+      rules = newValue
+        .filter(rule => rule && typeof rule === "object")
+        .map(normalizeRule)
+        .filter(isRuleValid)
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    renderRules();
   }
 
-  renderRules();
+  if (Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)) {
+    historyDomains = normalizeHistoryDomains(changes[HISTORY_DOMAINS_STORAGE_KEY].newValue);
+    renderHistoryDomains();
+  }
 }
 
 async function initialize() {
-  rules = await loadRules();
+  const [loadedRules, loadedHistoryDomains] = await Promise.all([
+    loadRules(),
+    loadHistoryDomains(),
+  ]);
+
+  rules = loadedRules;
+  historyDomains = loadedHistoryDomains;
+
+  renderHistoryDomains();
   renderRules();
 
+  historyDomainForm.addEventListener("submit", handleHistoryDomainSubmit);
   ruleForm.addEventListener("submit", handleSubmit);
   cancelEditButton.addEventListener("click", resetForm);
   chrome.storage.onChanged.addListener(handleStorageChanged);

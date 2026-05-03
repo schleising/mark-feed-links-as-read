@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Mark Feed Links as Read",
   "version": "0.0.0",
-  "description": "Marks New Scientist links as seen and injects simple user-defined CSS rules by domain.",
+  "description": "Marks links as seen on configurable history domains and injects simple user-defined CSS rules by domain.",
   "permissions": [
     "storage",
     "tabs",

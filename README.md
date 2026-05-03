@@ -1,23 +1,25 @@
 # mark-feed-links-as-read
 
 Local unpacked Chrome extension that restores a "read-like" visual cue for
-New Scientist links when browser visited-link partitioning is enabled.
+links on domains you configure.
 
 ## What it does
 
 - Watches browser tab/navigation loads.
-- Marks New Scientist article pages as seen regardless of where they were opened from.
-- Stores a local seen-link set in `chrome.storage.local`.
-- Provides a built-in options UI for simple per-domain custom CSS rules.
-- On `newscientist.com`, decorates matching links with a CSS class so they can
-	appear "read" independently of `:visited`.
+- Saves links as seen only when the destination URL matches a configured
+	history domain pattern.
+- Stores seen-link history in `chrome.storage.local`.
+- Decorates matching links with a CSS class so they can appear "read"
+	independently of `:visited`.
+- Provides a built-in options UI for:
+	- Editable history domains for link history tracking
+	- Simple per-domain custom CSS rules
 
-The decoration is extension-managed and only applies to New Scientist article
-links (`/article/...`).
+No destination domain is hardcoded for link-history tracking.
 
-## Current style
+## Built-in Link Style
 
-The extension injects this style on New Scientist pages:
+The extension injects this style for seen-link decoration:
 
 ```css
 a.mflar-seen-from-feeds,
@@ -29,17 +31,24 @@ a.mflar-seen-from-feeds * {
 Scrollbar styling is no longer hardcoded. Add scrollbar rules through Extension
 options using the custom style UI.
 
-## Custom style UI
+## Options UI
 
-Open the extension Options page to add simple rules:
+Open the extension Options page:
 
 1. Open `chrome://extensions`.
 2. Find this extension and click `Details`.
 3. Click `Extension options`.
-4. Add:
-	- Domain pattern (for example `*`, `example.com`, or `*.example.com`)
-	- Selector (for example `html, body`)
-	- CSS declarations (for example `scrollbar-width: auto !important;`)
+
+Configure history domains:
+
+1. Add a domain pattern in `History Domains`.
+2. Use `*` for all sites, `example.com` for exact host, or
+	`*.example.com` for subdomains.
+
+Configure custom styles:
+
+1. Add a style rule with domain pattern, selector, and declarations.
+2. Example declarations: `scrollbar-width: auto !important;`
 
 Rules are saved in `chrome.storage.local` and applied live on matching pages.
 
@@ -53,20 +62,19 @@ Rules are saved in `chrome.storage.local` and applied live on matching pages.
 ## Notes
 
 - Manifest version is intentionally `0.0.0` for local development use.
-- Stored links are pruned by age and capped in size.
+- Seen-link history is pruned by age and capped in size.
+- Legacy seen-link storage keys are automatically migrated.
 
 ## Troubleshooting
 
 If links are not decorating:
 
 1. Reload the unpacked extension from `chrome://extensions` after code changes.
-2. Refresh any open New Scientist tabs.
-3. Open a New Scientist article page in any tab.
+2. Confirm at least one `History Domains` entry exists in Extension options.
+3. Refresh the relevant page and open a link to a tracked domain in any tab.
 4. Open `chrome://extensions`, click `Inspect views` for this extension content script/service worker, and check for errors.
-
-This extension only tracks and decorates New Scientist `/article/...` links.
 
 Debug logs use the prefix `[MFLAR]` in the page console.
 Background service worker logs use `[MFLAR][BG]` in the extension service worker console.
 
-Right-click alone does not mark a link as seen; marking happens once a New Scientist article tab actually loads.
+Right-click alone does not mark a link as seen; marking happens once a tracked-domain tab actually loads.

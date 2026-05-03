@@ -1,7 +1,9 @@
 (() => {
   "use strict";
 
-  const SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
+  const SEEN_LINK_STORAGE_KEY = "seenHistoryLinksV1";
+  const LEGACY_SEEN_LINK_STORAGE_KEY = "seenNewScientistArticleLinksV1";
+  const HISTORY_DOMAINS_STORAGE_KEY = "historyDomainsV1";
   const CUSTOM_STYLE_RULES_STORAGE_KEY = "customStyleRulesV1";
   const DECORATED_CLASS = "mflar-seen-from-feeds";
   const DEBUG = true;
@@ -28,30 +30,6 @@
     console.error(`${DEBUG_PREFIX} ${message}`, error);
   }
 
-  function normalizeNewScientistArticleUrl(rawUrl) {
-    try {
-      const parsed = new URL(String(rawUrl || ""), window.location.href);
-      const hostname = parsed.hostname.toLowerCase();
-      if (hostname !== "newscientist.com" && hostname !== "www.newscientist.com") {
-        return "";
-      }
-
-      if (!parsed.pathname.toLowerCase().startsWith("/article/")) {
-        return "";
-      }
-
-      const path = parsed.pathname.endsWith("/") ? parsed.pathname : `${parsed.pathname}/`;
-      return `https://www.newscientist.com${path}`;
-    } catch (_error) {
-      return "";
-    }
-  }
-
-  function isNewScientistPage() {
-    const hostname = String(window.location.hostname || "").toLowerCase();
-    return hostname === "newscientist.com" || hostname === "www.newscientist.com";
-  }
-
   function normalizeDomainPattern(rawPattern) {
     let pattern = String(rawPattern || "").trim().toLowerCase();
     if (pattern === "") {
@@ -75,6 +53,23 @@
     }
 
     return pattern;
+  }
+
+  function normalizeHistoryDomains(candidateDomains) {
+    if (!Array.isArray(candidateDomains)) {
+      return [];
+    }
+
+    const unique = new Set();
+
+    candidateDomains.forEach(candidate => {
+      const normalized = normalizeDomainPattern(candidate);
+      if (normalized !== "") {
+        unique.add(normalized);
+      }
+    });
+
+    return Array.from(unique);
   }
 
   function escapeRegexLiteral(value) {
@@ -110,19 +105,64 @@
     return wildcardRegex.test(hostname);
   }
 
+  function normalizeTrackedUrl(rawUrl, trackedDomains) {
+    try {
+      const parsed = new URL(String(rawUrl || ""), window.location.href);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return "";
+      }
+
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+      const matchesTrackedDomain = trackedDomains.some(pattern => doesDomainPatternMatch(pattern, hostname));
+      if (!matchesTrackedDomain) {
+        return "";
+      }
+
+      parsed.hash = "";
+      return parsed.toString();
+    } catch (_error) {
+      return "";
+    }
+  }
+
   async function loadSeenLinkMap() {
-    const data = await chrome.storage.local.get(SEEN_LINK_STORAGE_KEY);
-    const candidate = data[SEEN_LINK_STORAGE_KEY];
-    if (!candidate || typeof candidate !== "object") {
-      debugLog("No seen-link map found in storage yet.");
-      return {};
+    const data = await chrome.storage.local.get([
+      SEEN_LINK_STORAGE_KEY,
+      LEGACY_SEEN_LINK_STORAGE_KEY,
+    ]);
+
+    const current = data[SEEN_LINK_STORAGE_KEY];
+    if (current && typeof current === "object") {
+      debugLog("Loaded seen-link map from generic storage key.", {
+        entries: Object.keys(current).length,
+      });
+
+      return current;
     }
 
-    debugLog("Loaded seen-link map from storage.", {
-      entries: Object.keys(candidate).length,
+    const legacy = data[LEGACY_SEEN_LINK_STORAGE_KEY];
+    if (legacy && typeof legacy === "object") {
+      debugLog("Loaded seen-link map from legacy storage key.", {
+        entries: Object.keys(legacy).length,
+      });
+
+      return legacy;
+    }
+
+    debugLog("No seen-link map found in storage yet.");
+    return {};
+  }
+
+  async function loadHistoryDomains() {
+    const data = await chrome.storage.local.get(HISTORY_DOMAINS_STORAGE_KEY);
+    const normalized = normalizeHistoryDomains(data[HISTORY_DOMAINS_STORAGE_KEY]);
+
+    debugLog("Loaded history domains from storage.", {
+      totalDomains: normalized.length,
+      domains: normalized,
     });
 
-    return candidate;
+    return normalized;
   }
 
   async function loadCustomStyleRules() {
@@ -240,14 +280,15 @@
     });
   }
 
-  function applyDecorations(root, seenUrlSet, reason = "unknown") {
+  function applyDecorations(root, seenUrlSet, trackedDomains, reason = "unknown") {
     const anchors = collectAnchors(root);
     let decoratedCount = 0;
     let matchedCount = 0;
 
     anchors.forEach(anchor => {
-      const normalized = normalizeNewScientistArticleUrl(anchor.href);
+      const normalized = normalizeTrackedUrl(anchor.href, trackedDomains);
       if (normalized === "") {
+        anchor.classList.remove(DECORATED_CLASS);
         return;
       }
 
@@ -266,6 +307,7 @@
         scannedAnchors: anchors.length,
         matchedCount,
         decoratedCount,
+        trackedDomainCount: trackedDomains.length,
       });
     }
   }
@@ -297,25 +339,34 @@
     });
   }
 
-  async function setupNewScientistDecorator() {
-    debugLog("Setting up New Scientist decorator.", {
+  async function setupSeenLinkDecorator() {
+    debugLog("Setting up tracked-domain link decorator.", {
       href: window.location.href,
     });
 
     ensureDecoratorStyle();
 
-    const seenMap = await loadSeenLinkMap();
+    const [seenMap, initialHistoryDomains] = await Promise.all([
+      loadSeenLinkMap(),
+      loadHistoryDomains(),
+    ]);
+
     let seenUrlSet = new Set(Object.keys(seenMap));
-    debugLog("Initial seen-link set ready.", {
-      size: seenUrlSet.size,
+    let historyDomains = initialHistoryDomains;
+
+    debugLog("Initial tracked-domain decorator state ready.", {
+      seenCount: seenUrlSet.size,
+      totalDomains: historyDomains.length,
+      domains: historyDomains,
     });
-    applyDecorations(document, seenUrlSet, "initial");
+
+    applyDecorations(document, seenUrlSet, historyDomains, "initial");
 
     const observer = new MutationObserver(mutations => {
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node instanceof Element) {
-            applyDecorations(node, seenUrlSet, "mutation");
+            applyDecorations(node, seenUrlSet, historyDomains, "mutation");
           }
         });
       });
@@ -327,25 +378,50 @@
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "local" || !Object.prototype.hasOwnProperty.call(changes, SEEN_LINK_STORAGE_KEY)) {
+      if (areaName !== "local") {
         return;
       }
 
-      const newValue = changes[SEEN_LINK_STORAGE_KEY].newValue;
-      if (!newValue || typeof newValue !== "object") {
-        seenUrlSet = new Set();
-      } else {
-        seenUrlSet = new Set(Object.keys(newValue));
+      let shouldRefreshDecorations = false;
+
+      if (Object.prototype.hasOwnProperty.call(changes, SEEN_LINK_STORAGE_KEY)) {
+        const newValue = changes[SEEN_LINK_STORAGE_KEY].newValue;
+        if (newValue && typeof newValue === "object") {
+          seenUrlSet = new Set(Object.keys(newValue));
+        } else {
+          seenUrlSet = new Set();
+        }
+
+        shouldRefreshDecorations = true;
+      } else if (Object.prototype.hasOwnProperty.call(changes, LEGACY_SEEN_LINK_STORAGE_KEY)) {
+        const legacyValue = changes[LEGACY_SEEN_LINK_STORAGE_KEY].newValue;
+        if (legacyValue && typeof legacyValue === "object") {
+          seenUrlSet = new Set(Object.keys(legacyValue));
+        } else {
+          seenUrlSet = new Set();
+        }
+
+        shouldRefreshDecorations = true;
       }
 
-      debugLog("Storage changed; refreshing decorations.", {
-        size: seenUrlSet.size,
+      if (Object.prototype.hasOwnProperty.call(changes, HISTORY_DOMAINS_STORAGE_KEY)) {
+        historyDomains = normalizeHistoryDomains(changes[HISTORY_DOMAINS_STORAGE_KEY].newValue);
+        shouldRefreshDecorations = true;
+      }
+
+      if (!shouldRefreshDecorations) {
+        return;
+      }
+
+      debugLog("Storage changed; refreshing tracked-domain decorations.", {
+        seenCount: seenUrlSet.size,
+        totalDomains: historyDomains.length,
+        domains: historyDomains,
       });
-      applyDecorations(document, seenUrlSet, "storage-change");
+
+      applyDecorations(document, seenUrlSet, historyDomains, "storage-change");
     });
   }
-
-  const newScientistPage = isNewScientistPage();
 
   void setupCustomStyleInjector().catch(error => {
     debugError("Failed to set up custom style injector.", error);
@@ -353,12 +429,9 @@
 
   debugLog("Content script initialized.", {
     href: window.location.href,
-    newScientistPage,
   });
 
-  if (newScientistPage) {
-    void setupNewScientistDecorator().catch(error => {
-      debugError("Failed to set up New Scientist decorator.", error);
-    });
-  }
+  void setupSeenLinkDecorator().catch(error => {
+    debugError("Failed to set up tracked-domain link decorator.", error);
+  });
 })();

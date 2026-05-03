@@ -11,10 +11,39 @@
       <header class="page-header">
         <h1>Simple Style Rules</h1>
         <p>
-          Add lightweight CSS rules by domain. This is intentionally simpler than Stylus:
-          just domain pattern, selector, and declarations.
+          Configure tracked history domains and add lightweight CSS rules. This is
+          intentionally simpler than Stylus: just domain pattern, selector, and declarations.
         </p>
       </header>
+
+      <section class="panel">
+        <h2>History Domains</h2>
+        <p class="helper-text">
+          Links are only saved as seen when the destination URL matches one of
+          these domain patterns.
+        </p>
+
+        <form id="history-domain-form" novalidate>
+          <label class="field">
+            <span>Domain pattern</span>
+            <input
+              id="history-domain-input"
+              name="historyDomain"
+              type="text"
+              placeholder="newscientist.com"
+              required
+            />
+            <small>Use <code>*</code> for all sites, <code>example.com</code> for exact, or <code>*.example.com</code> for subdomains.</small>
+          </label>
+
+          <div class="button-row">
+            <button type="submit" id="add-history-domain">Add Domain</button>
+          </div>
+        </form>
+
+        <p id="history-domain-empty" class="empty-state">No history domains configured yet.</p>
+        <div id="history-domain-list" class="history-domain-list"></div>
+      </section>
 
       <section class="panel">
         <h2 id="form-title">Add Rule</h2>
